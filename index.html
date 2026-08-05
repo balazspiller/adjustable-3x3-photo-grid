@@ -480,7 +480,7 @@
                 <li>Use the + and − buttons to add or remove columns (right) and rows (bottom) - from 1x1 up to 5x5</li>
                 <li>Choose Reorder to swap images, or Position to drag the crop and scroll over an image to zoom</li>
                 <li>Drag the horizontal or vertical grid lines to adjust cell sizes</li>
-                <li>Drag the bottom handle to change the canvas aspect ratio</li>
+                <li>Drag the bottom handle to change the canvas aspect ratio; hold Shift to resize only the bottom row</li>
                 <li>Set your desired export width (higher = better quality)</li>
                 <li>Click "Download Collage" to save your high-resolution creation</li>
             </ul>
@@ -532,6 +532,7 @@
         let resizingCanvas = false;
         let startY = 0;
         let startHeight = 600;
+        let startHorizontalLines = [];
         
         // Image dragging
         let draggingImage = false;
@@ -1122,6 +1123,7 @@
             resizingCanvas = true;
             startY = e.clientY;
             startHeight = canvas.height;
+            startHorizontalLines = [...horizontalLines];
         }
 
         function handleResizeTouchStart(e) {
@@ -1129,13 +1131,28 @@
             resizingCanvas = true;
             startY = e.touches[0].clientY;
             startHeight = canvas.height;
+            startHorizontalLines = [...horizontalLines];
         }
 
         function handleResizeMove(e) {
             if (!resizingCanvas) return;
             const deltaY = e.clientY - startY;
-            const newHeight = Math.max(200, Math.min(1200, startHeight + deltaY));
+            const bottomRowStart = startHorizontalLines.length > 0
+                ? startHorizontalLines[startHorizontalLines.length - 1] * startHeight / 100
+                : 0;
+            const minHeight = Math.max(200, bottomRowStart + 20);
+            const newHeight = Math.max(minHeight, Math.min(1200, startHeight + deltaY));
             canvas.height = newHeight;
+
+            if (e.shiftKey) {
+                // Keep every row above the bottom one at its starting pixel height.
+                // The canvas's added or removed height is therefore absorbed by the
+                // bottom row alone.
+                horizontalLines = startHorizontalLines.map(position => position * startHeight / newHeight);
+            } else {
+                // Return to proportional sizing as soon as Shift is released.
+                horizontalLines = [...startHorizontalLines];
+            }
             drawCollage();
         }
 
@@ -1145,11 +1162,13 @@
             const deltaY = e.touches[0].clientY - startY;
             const newHeight = Math.max(200, Math.min(1200, startHeight + deltaY));
             canvas.height = newHeight;
+            horizontalLines = [...startHorizontalLines];
             drawCollage();
         }
 
         function handleResizeEnd() {
             resizingCanvas = false;
+            startHorizontalLines = [];
         }
 
         function updateCursor(e) {
