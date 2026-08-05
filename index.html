@@ -191,8 +191,26 @@
             background: #4a4a4a;
         }
 
-        .add-column-btn, .add-row-btn {
+        .grid-size-controls {
             position: absolute;
+            display: flex;
+            gap: 8px;
+        }
+
+        .column-controls {
+            right: -40px;
+            top: 0;
+            bottom: 0;
+            flex-direction: column;
+        }
+
+        .row-controls {
+            bottom: -40px;
+            left: 0;
+            right: 0;
+        }
+
+        .grid-size-btn {
             background: #1a1a1a;
             color: white;
             border: none;
@@ -207,27 +225,21 @@
             padding: 0;
         }
 
-        .add-column-btn {
-            right: -40px;
-            top: 0;
-            bottom: 0;
+        .column-controls .grid-size-btn {
             width: 32px;
-            height: 100%;
+            flex: 1;
         }
 
-        .add-row-btn {
-            bottom: -40px;
-            left: 0;
-            right: 0;
+        .row-controls .grid-size-btn {
             height: 32px;
-            width: 100%;
+            flex: 1;
         }
 
-        .add-column-btn:hover, .add-row-btn:hover {
+        .grid-size-btn:hover:not(:disabled) {
             background: #2a2a2a;
         }
 
-        .add-column-btn:disabled, .add-row-btn:disabled {
+        .grid-size-btn:disabled {
             opacity: 0.3;
             cursor: not-allowed;
         }
@@ -347,7 +359,22 @@
             high-resolution collages up to 8000px. No signup, no watermarks, completely 
             private.
         </p>
-        
+
+        <div class="canvas-container">
+            <div class="canvas-wrapper">
+                <canvas id="collageCanvas" width="600" height="600"></canvas>
+                <div class="grid-size-controls column-controls" aria-label="Column controls">
+                    <button type="button" class="grid-size-btn" id="addColumnBtn" title="Add column" aria-label="Add column">+</button>
+                    <button type="button" class="grid-size-btn" id="removeColumnBtn" title="Remove rightmost column" aria-label="Remove rightmost column">−</button>
+                </div>
+                <div class="grid-size-controls row-controls" aria-label="Row controls">
+                    <button type="button" class="grid-size-btn" id="addRowBtn" title="Add row" aria-label="Add row">+</button>
+                    <button type="button" class="grid-size-btn" id="removeRowBtn" title="Remove bottom row" aria-label="Remove bottom row">−</button>
+                </div>
+                <div class="resize-handle" id="resizeHandle"></div>
+            </div>
+        </div>
+
         <div class="upload-section">
             <div class="file-input-wrapper">
                 <input type="file" id="fileInput" accept="image/*" multiple>
@@ -375,15 +402,6 @@
             </div>
         </div>
 
-        <div class="canvas-container">
-            <div class="canvas-wrapper">
-                <canvas id="collageCanvas" width="600" height="600"></canvas>
-                <button class="add-column-btn" id="addColumnBtn" title="Add column">+</button>
-                <button class="add-row-btn" id="addRowBtn" title="Add row">+</button>
-                <div class="resize-handle" id="resizeHandle"></div>
-            </div>
-        </div>
-
         <div class="controls">
             <button class="download-btn" id="downloadBtn" disabled>Download Collage</button>
             <button class="reset-btn" id="resetBtn">Reset</button>
@@ -393,7 +411,7 @@
             <strong>How to use:</strong>
             <ul>
                 <li>Click "Add Images" to select photos - you can do this multiple times until all slots are filled</li>
-                <li>Use the + buttons to add more columns (right) or rows (bottom) - up to 5x5</li>
+                <li>Use the + and − buttons to add or remove columns (right) and rows (bottom) - from 1x1 up to 5x5</li>
                 <li>Drag images to swap their positions in the grid</li>
                 <li>Drag the horizontal or vertical grid lines to adjust cell sizes</li>
                 <li>Drag the bottom handle to change the canvas aspect ratio</li>
@@ -416,11 +434,15 @@
         const resizeHandle = document.getElementById('resizeHandle');
         const maxWidthInput = document.getElementById('maxWidth');
         const addColumnBtn = document.getElementById('addColumnBtn');
+        const removeColumnBtn = document.getElementById('removeColumnBtn');
         const addRowBtn = document.getElementById('addRowBtn');
+        const removeRowBtn = document.getElementById('removeRowBtn');
 
         // Dynamic grid size
         let numCols = 2;
         let numRows = 2;
+        const minCols = 1;
+        const minRows = 1;
         const maxCols = 5;
         const maxRows = 5;
 
@@ -449,7 +471,9 @@
         downloadBtn.addEventListener('click', downloadCollage);
         resetBtn.addEventListener('click', reset);
         addColumnBtn.addEventListener('click', addColumn);
+        removeColumnBtn.addEventListener('click', removeColumn);
         addRowBtn.addEventListener('click', addRow);
+        removeRowBtn.addEventListener('click', removeRow);
         canvas.addEventListener('mousedown', handleMouseDown);
         canvas.addEventListener('mousemove', handleMouseMove);
         canvas.addEventListener('mouseup', handleMouseUp);
@@ -481,7 +505,9 @@
 
         function updateButtonStates() {
             addColumnBtn.disabled = numCols >= maxCols;
+            removeColumnBtn.disabled = numCols <= minCols;
             addRowBtn.disabled = numRows >= maxRows;
+            removeRowBtn.disabled = numRows <= minRows;
         }
 
         function generateEvenLines(count) {
@@ -531,6 +557,40 @@
             // Regenerate even grid lines
             horizontalLines = generateEvenLines(numRows);
             
+            updateImageCount();
+            updateButtonStates();
+            drawCollage();
+        }
+
+        function removeColumn() {
+            if (numCols <= minCols) return;
+
+            const oldNumCols = numCols;
+            numCols--;
+
+            // Keep each row intact while removing its rightmost cell.
+            const newImages = [];
+            for (let row = 0; row < numRows; row++) {
+                for (let col = 0; col < numCols; col++) {
+                    newImages.push(images[row * oldNumCols + col]);
+                }
+            }
+            images = newImages;
+            verticalLines = generateEvenLines(numCols);
+
+            updateImageCount();
+            updateButtonStates();
+            drawCollage();
+        }
+
+        function removeRow() {
+            if (numRows <= minRows) return;
+
+            numRows--;
+            // Rows are stored consecutively, so trimming removes the bottom row.
+            images = images.slice(0, numRows * numCols);
+            horizontalLines = generateEvenLines(numRows);
+
             updateImageCount();
             updateButtonStates();
             drawCollage();
