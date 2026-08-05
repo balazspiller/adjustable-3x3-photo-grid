@@ -100,6 +100,63 @@
             margin-right: auto;
         }
 
+        .edit-mode-control {
+            margin: 0 auto 24px;
+            text-align: center;
+        }
+
+        .edit-mode-label {
+            display: block;
+            margin-bottom: 10px;
+            color: #1a1a1a;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+
+        .edit-mode-buttons {
+            display: flex;
+            width: 100%;
+            max-width: 420px;
+            margin: 0 auto;
+            border: 1px solid #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .edit-mode-btn {
+            min-width: 0;
+            flex: 1;
+            padding: 10px 16px;
+            background: white;
+            color: #666;
+            border: 0;
+            border-right: 1px solid #e0e0e0;
+            border-radius: 0;
+            font-size: 13px;
+        }
+
+        .edit-mode-btn:last-child {
+            border-right: 0;
+        }
+
+        .edit-mode-btn:hover {
+            background: #fafafa;
+            color: #1a1a1a;
+        }
+
+        .edit-mode-btn.active {
+            background: #1a1a1a;
+            color: white;
+        }
+
+        .edit-mode-hint {
+            min-height: 19px;
+            margin-top: 8px;
+            color: #888;
+            font-size: 12px;
+        }
+
         .upload-section {
             margin-bottom: 40px;
         }
@@ -360,6 +417,15 @@
             private.
         </p>
 
+        <div class="edit-mode-control">
+            <span class="edit-mode-label" id="editModeLabel">Drag tool</span>
+            <div class="edit-mode-buttons" role="group" aria-labelledby="editModeLabel">
+                <button type="button" class="edit-mode-btn active" data-mode="reorder" aria-pressed="true">Reorder</button>
+                <button type="button" class="edit-mode-btn" data-mode="position" aria-pressed="false">Position</button>
+            </div>
+            <div class="edit-mode-hint" id="editModeHint">Drag an image onto another cell to swap them.</div>
+        </div>
+
         <div class="canvas-container">
             <div class="canvas-wrapper">
                 <canvas id="collageCanvas" width="600" height="600"></canvas>
@@ -412,7 +478,7 @@
             <ul>
                 <li>Click "Add Images" to select photos - you can do this multiple times until all slots are filled</li>
                 <li>Use the + and − buttons to add or remove columns (right) and rows (bottom) - from 1x1 up to 5x5</li>
-                <li>Drag images to swap their positions in the grid</li>
+                <li>Choose Reorder to swap images, or Position to drag the crop and scroll over an image to zoom</li>
                 <li>Drag the horizontal or vertical grid lines to adjust cell sizes</li>
                 <li>Drag the bottom handle to change the canvas aspect ratio</li>
                 <li>Set your desired export width (higher = better quality)</li>
@@ -437,6 +503,8 @@
         const removeColumnBtn = document.getElementById('removeColumnBtn');
         const addRowBtn = document.getElementById('addRowBtn');
         const removeRowBtn = document.getElementById('removeRowBtn');
+        const editModeButtons = document.querySelectorAll('.edit-mode-btn');
+        const editModeHint = document.getElementById('editModeHint');
 
         // Dynamic grid size
         let numCols = 2;
@@ -446,7 +514,12 @@
         const maxCols = 5;
         const maxRows = 5;
 
+        function createDefaultTransform() {
+            return { panX: 0, panY: 0, zoom: 1 };
+        }
+
         let images = Array(numRows * numCols).fill(null);
+        let imageTransforms = Array.from({ length: numRows * numCols }, createDefaultTransform);
         let loadedImages = [];
         
         // Grid lines positions (percentages of canvas size)
@@ -466,6 +539,8 @@
         let draggedOverIndex = -1;
         let dragOffset = { x: 0, y: 0 };
         let currentMousePos = { x: 0, y: 0 };
+        let interactionMode = 'reorder';
+        let interactionStart = null;
 
         fileInput.addEventListener('change', handleFileSelect);
         downloadBtn.addEventListener('click', downloadCollage);
@@ -474,10 +549,14 @@
         removeColumnBtn.addEventListener('click', removeColumn);
         addRowBtn.addEventListener('click', addRow);
         removeRowBtn.addEventListener('click', removeRow);
+        editModeButtons.forEach(button => {
+            button.addEventListener('click', () => setInteractionMode(button.dataset.mode));
+        });
         canvas.addEventListener('mousedown', handleMouseDown);
         canvas.addEventListener('mousemove', handleMouseMove);
         canvas.addEventListener('mouseup', handleMouseUp);
         canvas.addEventListener('mouseleave', handleMouseUp);
+        canvas.addEventListener('wheel', handleWheel, { passive: false });
         
         // Touch events for mobile
         canvas.addEventListener('touchstart', handleTouchStart);
@@ -491,6 +570,22 @@
         document.addEventListener('touchmove', handleResizeTouchMove);
         document.addEventListener('mouseup', handleResizeEnd);
         document.addEventListener('touchend', handleResizeEnd);
+
+        function setInteractionMode(mode) {
+            interactionMode = mode;
+            editModeButtons.forEach(button => {
+                const isActive = button.dataset.mode === mode;
+                button.classList.toggle('active', isActive);
+                button.setAttribute('aria-pressed', String(isActive));
+            });
+
+            const hints = {
+                reorder: 'Drag an image onto another cell to swap them.',
+                position: 'Drag to adjust the crop. Scroll to zoom toward the pointer.'
+            };
+            editModeHint.textContent = hints[mode];
+            canvas.style.cursor = 'default';
+        }
 
         function getTotalSlots() {
             return numRows * numCols;
@@ -525,16 +620,21 @@
             
             // Add null slots for the new column (one per row)
             const newImages = [];
+            const newTransforms = [];
             for (let row = 0; row < numRows; row++) {
                 for (let col = 0; col < numCols; col++) {
                     if (col === numCols - 1) {
                         newImages.push(null);
+                        newTransforms.push(createDefaultTransform());
                     } else {
-                        newImages.push(images[row * (numCols - 1) + col]);
+                        const oldIndex = row * (numCols - 1) + col;
+                        newImages.push(images[oldIndex]);
+                        newTransforms.push(imageTransforms[oldIndex]);
                     }
                 }
             }
             images = newImages;
+            imageTransforms = newTransforms;
             
             // Regenerate even grid lines
             verticalLines = generateEvenLines(numCols);
@@ -552,6 +652,7 @@
             // Add null slots for the new row
             for (let col = 0; col < numCols; col++) {
                 images.push(null);
+                imageTransforms.push(createDefaultTransform());
             }
             
             // Regenerate even grid lines
@@ -570,12 +671,16 @@
 
             // Keep each row intact while removing its rightmost cell.
             const newImages = [];
+            const newTransforms = [];
             for (let row = 0; row < numRows; row++) {
                 for (let col = 0; col < numCols; col++) {
-                    newImages.push(images[row * oldNumCols + col]);
+                    const oldIndex = row * oldNumCols + col;
+                    newImages.push(images[oldIndex]);
+                    newTransforms.push(imageTransforms[oldIndex]);
                 }
             }
             images = newImages;
+            imageTransforms = newTransforms;
             verticalLines = generateEvenLines(numCols);
 
             updateImageCount();
@@ -589,6 +694,7 @@
             numRows--;
             // Rows are stored consecutively, so trimming removes the bottom row.
             images = images.slice(0, numRows * numCols);
+            imageTransforms = imageTransforms.slice(0, numRows * numCols);
             horizontalLines = generateEvenLines(numRows);
 
             updateImageCount();
@@ -654,10 +760,12 @@
                     const w = cols[col + 1] - cols[col];
                     const h = rows[row + 1] - rows[row];
 
-                    // Don't draw the image being dragged in its original position
-                    if (images[imageIndex] && imageIndex !== draggedImageIndex) {
-                        drawImageFit(images[imageIndex], x, y, w, h);
-                    } else if (imageIndex === draggedImageIndex && images[imageIndex]) {
+                    // Reordering lifts the image out of its original cell. Positioning
+                    // and zooming redraw it in place with the updated crop.
+                    const isLiftedForReorder = interactionMode === 'reorder' && imageIndex === draggedImageIndex;
+                    if (images[imageIndex] && !isLiftedForReorder) {
+                        drawImageFit(images[imageIndex], x, y, w, h, imageTransforms[imageIndex]);
+                    } else if (isLiftedForReorder && images[imageIndex]) {
                         // Draw a dimmed placeholder
                         ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
                         ctx.fillRect(x, y, w, h);
@@ -691,7 +799,7 @@
                     }
                     
                     // Highlight if being dragged over
-                    if (imageIndex === draggedOverIndex && draggingImage && imageIndex !== draggedImageIndex) {
+                    if (interactionMode === 'reorder' && imageIndex === draggedOverIndex && draggingImage && imageIndex !== draggedImageIndex) {
                         ctx.fillStyle = 'rgba(26, 26, 26, 0.08)';
                         ctx.fillRect(x, y, w, h);
                         ctx.strokeStyle = '#1a1a1a';
@@ -729,7 +837,7 @@
             ctx.shadowColor = 'transparent';
             
             // Draw the dragged image following the cursor
-            if (draggingImage && draggedImageIndex !== -1 && images[draggedImageIndex]) {
+            if (interactionMode === 'reorder' && draggingImage && draggedImageIndex !== -1 && images[draggedImageIndex]) {
                 const dragSize = 120;
                 const dragX = currentMousePos.x - dragSize / 2;
                 const dragY = currentMousePos.y - dragSize / 2;
@@ -749,7 +857,7 @@
                 // Draw the image
                 ctx.save();
                 ctx.globalAlpha = 0.95;
-                drawImageFit(images[draggedImageIndex], dragX, dragY, dragSize, dragSize);
+                drawImageFit(images[draggedImageIndex], dragX, dragY, dragSize, dragSize, imageTransforms[draggedImageIndex]);
                 ctx.restore();
                 
                 // Draw border
@@ -759,37 +867,49 @@
             }
         }
 
-        function drawImageFit(img, x, y, w, h) {
+        function getImagePlacement(img, w, h, transform = createDefaultTransform()) {
             const imgRatio = img.width / img.height;
             const cellRatio = w / h;
 
-            let drawWidth, drawHeight, offsetX, offsetY;
+            let baseWidth;
+            let baseHeight;
 
             if (imgRatio > cellRatio) {
-                drawHeight = h;
-                drawWidth = h * imgRatio;
-                offsetX = (w - drawWidth) / 2;
-                offsetY = 0;
+                baseHeight = h;
+                baseWidth = h * imgRatio;
             } else {
-                drawWidth = w;
-                drawHeight = w / imgRatio;
-                offsetX = 0;
-                offsetY = (h - drawHeight) / 2;
+                baseWidth = w;
+                baseHeight = w / imgRatio;
             }
 
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(x, y, w, h);
-            ctx.clip();
-            ctx.drawImage(img, x + offsetX, y + offsetY, drawWidth, drawHeight);
-            ctx.restore();
+            const drawWidth = baseWidth * transform.zoom;
+            const drawHeight = baseHeight * transform.zoom;
+            const overflowX = Math.max(0, drawWidth - w);
+            const overflowY = Math.max(0, drawHeight - h);
+            const offsetX = -overflowX / 2 + transform.panX * overflowX / 2;
+            const offsetY = -overflowY / 2 + transform.panY * overflowY / 2;
+
+            return { drawWidth, drawHeight, offsetX, offsetY, overflowX, overflowY };
+        }
+
+        function drawImageFit(img, x, y, w, h, transform = createDefaultTransform(), targetCtx = ctx) {
+            const placement = getImagePlacement(img, w, h, transform);
+
+            targetCtx.save();
+            targetCtx.beginPath();
+            targetCtx.rect(x, y, w, h);
+            targetCtx.clip();
+            targetCtx.drawImage(
+                img,
+                x + placement.offsetX,
+                y + placement.offsetY,
+                placement.drawWidth,
+                placement.drawHeight
+            );
+            targetCtx.restore();
         }
 
         function handleMouseDown(e) {
-            const totalSlots = getTotalSlots();
-            const loadedCount = images.filter(img => img !== null).length;
-            if (loadedCount !== totalSlots) return;
-
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
@@ -825,7 +945,19 @@
             if (cellIndex !== -1 && images[cellIndex]) {
                 draggingImage = true;
                 draggedImageIndex = cellIndex;
-                canvas.style.cursor = 'grabbing';
+                const transform = imageTransforms[cellIndex];
+                interactionStart = {
+                    x,
+                    y,
+                    panX: transform.panX,
+                    panY: transform.panY,
+                    zoom: transform.zoom
+                };
+                const activeCursors = {
+                    reorder: 'grabbing',
+                    position: 'move'
+                };
+                canvas.style.cursor = activeCursors[interactionMode];
             }
         }
 
@@ -841,11 +973,34 @@
             currentMousePos = { x, y };
 
             if (draggingImage) {
-                const cellIndex = getCellIndexAt(x, y);
-                if (cellIndex !== draggedImageIndex && cellIndex !== -1) {
-                    draggedOverIndex = cellIndex;
-                } else {
-                    draggedOverIndex = -1;
+                if (interactionMode === 'reorder') {
+                    const cellIndex = getCellIndexAt(x, y);
+                    if (cellIndex !== draggedImageIndex && cellIndex !== -1) {
+                        draggedOverIndex = cellIndex;
+                    } else {
+                        draggedOverIndex = -1;
+                    }
+                } else if (interactionMode === 'position') {
+                    const bounds = getCellBounds(draggedImageIndex);
+                    const transform = imageTransforms[draggedImageIndex];
+                    const startTransform = {
+                        panX: interactionStart.panX,
+                        panY: interactionStart.panY,
+                        zoom: interactionStart.zoom
+                    };
+                    const placement = getImagePlacement(
+                        images[draggedImageIndex],
+                        bounds.w,
+                        bounds.h,
+                        startTransform
+                    );
+
+                    transform.panX = placement.overflowX > 0
+                        ? Math.max(-1, Math.min(1, interactionStart.panX + (x - interactionStart.x) * 2 / placement.overflowX))
+                        : 0;
+                    transform.panY = placement.overflowY > 0
+                        ? Math.max(-1, Math.min(1, interactionStart.panY + (y - interactionStart.y) * 2 / placement.overflowY))
+                        : 0;
                 }
                 drawCollage();
                 return;
@@ -870,11 +1025,15 @@
         }
 
         function handleMouseUp() {
-            if (draggingImage && draggedOverIndex !== -1 && draggedImageIndex !== draggedOverIndex) {
+            if (interactionMode === 'reorder' && draggingImage && draggedOverIndex !== -1 && draggedImageIndex !== draggedOverIndex) {
                 // Swap images
                 const temp = images[draggedImageIndex];
                 images[draggedImageIndex] = images[draggedOverIndex];
                 images[draggedOverIndex] = temp;
+
+                const tempTransform = imageTransforms[draggedImageIndex];
+                imageTransforms[draggedImageIndex] = imageTransforms[draggedOverIndex];
+                imageTransforms[draggedOverIndex] = tempTransform;
             }
             
             dragging = false;
@@ -883,7 +1042,57 @@
             draggingImage = false;
             draggedImageIndex = -1;
             draggedOverIndex = -1;
+            interactionStart = null;
             canvas.style.cursor = 'default';
+            drawCollage();
+        }
+
+        function handleWheel(e) {
+            if (interactionMode !== 'position') return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (e.clientX - rect.left) * scaleX;
+            const y = (e.clientY - rect.top) * scaleY;
+            const cellIndex = getCellIndexAt(x, y);
+
+            if (cellIndex === -1 || !images[cellIndex]) return;
+
+            e.preventDefault();
+            const deltaMultiplier = e.deltaMode === 1
+                ? 16
+                : e.deltaMode === 2
+                    ? canvas.height
+                    : 1;
+            const zoomFactor = Math.exp(-e.deltaY * deltaMultiplier * 0.0015);
+            const transform = imageTransforms[cellIndex];
+            const bounds = getCellBounds(cellIndex);
+            const cursorX = x - bounds.x;
+            const cursorY = y - bounds.y;
+            const oldPlacement = getImagePlacement(images[cellIndex], bounds.w, bounds.h, transform);
+
+            // Remember which point in the source image is under the cursor so the
+            // crop can keep that point stationary as its dimensions change.
+            const imagePointX = (cursorX - oldPlacement.offsetX) / oldPlacement.drawWidth;
+            const imagePointY = (cursorY - oldPlacement.offsetY) / oldPlacement.drawHeight;
+            const newZoom = Math.max(1, Math.min(5, transform.zoom * zoomFactor));
+            const newPlacement = getImagePlacement(
+                images[cellIndex],
+                bounds.w,
+                bounds.h,
+                { ...transform, zoom: newZoom }
+            );
+            const targetOffsetX = cursorX - imagePointX * newPlacement.drawWidth;
+            const targetOffsetY = cursorY - imagePointY * newPlacement.drawHeight;
+
+            transform.zoom = newZoom;
+            transform.panX = newPlacement.overflowX > 0
+                ? Math.max(-1, Math.min(1, (targetOffsetX + newPlacement.overflowX / 2) * 2 / newPlacement.overflowX))
+                : 0;
+            transform.panY = newPlacement.overflowY > 0
+                ? Math.max(-1, Math.min(1, (targetOffsetY + newPlacement.overflowY / 2) * 2 / newPlacement.overflowY))
+                : 0;
             drawCollage();
         }
 
@@ -899,7 +1108,7 @@
 
         function handleTouchMove(e) {
             e.preventDefault();
-            if (!dragging) return;
+            if (!dragging && !draggingImage) return;
             const touch = e.touches[0];
             const mouseEvent = new MouseEvent('mousemove', {
                 clientX: touch.clientX,
@@ -944,13 +1153,6 @@
         }
 
         function updateCursor(e) {
-            const totalSlots = getTotalSlots();
-            const loadedCount = images.filter(img => img !== null).length;
-            if (loadedCount !== totalSlots) {
-                canvas.style.cursor = 'default';
-                return;
-            }
-
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
@@ -986,11 +1188,29 @@
                 // Check if over an image
                 const cellIndex = getCellIndexAt(x, y);
                 if (cellIndex !== -1 && images[cellIndex]) {
-                    canvas.style.cursor = 'grab';
+                    const cursors = {
+                        reorder: 'grab',
+                        position: 'move'
+                    };
+                    canvas.style.cursor = cursors[interactionMode];
                 } else {
                     canvas.style.cursor = 'default';
                 }
             }
+        }
+
+        function getCellBounds(index) {
+            const row = Math.floor(index / numCols);
+            const col = index % numCols;
+            const cols = [0, ...verticalLines.map(p => p * canvas.width / 100), canvas.width];
+            const rows = [0, ...horizontalLines.map(p => p * canvas.height / 100), canvas.height];
+
+            return {
+                x: cols[col],
+                y: rows[row],
+                w: cols[col + 1] - cols[col],
+                h: rows[row + 1] - rows[row]
+            };
         }
 
         function getCellIndexAt(x, y) {
@@ -1037,30 +1257,15 @@
                     const h = rows[row + 1] - rows[row];
 
                     if (images[imageIndex]) {
-                        const img = images[imageIndex];
-                        const imgRatio = img.width / img.height;
-                        const cellRatio = w / h;
-
-                        let drawWidth, drawHeight, offsetX, offsetY;
-
-                        if (imgRatio > cellRatio) {
-                            drawHeight = h;
-                            drawWidth = h * imgRatio;
-                            offsetX = (w - drawWidth) / 2;
-                            offsetY = 0;
-                        } else {
-                            drawWidth = w;
-                            drawHeight = w / imgRatio;
-                            offsetX = 0;
-                            offsetY = (h - drawHeight) / 2;
-                        }
-
-                        tempCtx.save();
-                        tempCtx.beginPath();
-                        tempCtx.rect(x, y, w, h);
-                        tempCtx.clip();
-                        tempCtx.drawImage(img, x + offsetX, y + offsetY, drawWidth, drawHeight);
-                        tempCtx.restore();
+                        drawImageFit(
+                            images[imageIndex],
+                            x,
+                            y,
+                            w,
+                            h,
+                            imageTransforms[imageIndex],
+                            tempCtx
+                        );
                     }
                     imageIndex++;
                 }
@@ -1083,6 +1288,7 @@
             numCols = 2;
             numRows = 2;
             images = Array(numRows * numCols).fill(null);
+            imageTransforms = Array.from({ length: numRows * numCols }, createDefaultTransform);
             loadedImages = [];
             verticalLines = [50];
             horizontalLines = [50];
